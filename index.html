@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Candlestick Chart</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+      cursor: grab;
+    }
+    .chart-container {
+      border: 1px solid #ccc;
+      padding: 20px;
+    }
+
+    .buttons-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-left: 20px;
+    }
+
+    .button {
+        width: 100px;
+        height: 40px;
+        font-size: 14px;
+        background-color: #f1f1f1;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .button:hover {
+        background-color: #e1e1e1;
+    }
+    .tooltip {
+      position: absolute;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 11px;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+    <div class="chart-container">
+        <canvas id="candlestick-chart" width="1200" height="650"></canvas>
+
+        <div class="tooltip" id="tooltip" style="display: none;">
+            Open: $<span id="tooltip-open"></span><br>
+            High: $<span id="tooltip-high"></span><br>
+            Low: $<span id="tooltip-low"></span><br>
+            Close: $<span id="tooltip-close"></span><br>
+            Time: <span id="tooltip-time"></span>
+        </div>
+
+        <div>
+          <button id="prev-button">Previous</button>
+          <button id="next-button">Next</button>
+          <button id="update-button">Update</button>
+        </div>
+      </div>
+
+
+  <script>
+
+
+    class CandlestickChart {
+        constructor(canvas, data) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.data = data;
+        this.currentIndex = Math.max(0, data.length - 30);  // Start at the latest data
+        this.candleWidth = 0;
+        this.candleHeight = 0;
+        this.chartWidth = canvas.width - 50;
+        this.chartHeight = canvas.height - 50;
+        this.chartOffsetX = 50;
+        this.chartOffsetY = 50;
+        this.sessionRanges = [];
+        this.signals = [];
+        this.supportResistance = [];
+        this.candlePadding = 2;
+        this.dragging = false;
+        this.dragStartX = 0;
+        this.tooltip = document.getElementById('tooltip');
+        this.tooltipOpen = document.getElementById('tooltip-open');
+        this.tooltipHigh = document.getElementById('tooltip-high');
+        this.tooltipLow = document.getElementById('tooltip-low');
+        this.tooltipClose = document.getElementById('tooltip-close');
+        this.tooltipTime = document.getElementById('tooltip-time');
+
+        this.prevClose = 0;
+        
+        this.prevButton = document.getElementById('prev-button');
+        this.prevButton.addEventListener('click', () => this.handlePrevious());
+
+        this.nextButton = document.getElementById('next-button');
+        this.nextButton.addEventListener('click', () => this.handleNext());
+
+        this.updateButton = document.getElementById('update-button');
+        this.updateButton.addEventListener('click', () => this.handleUpdate(this.prevClose));
+
+        canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        canvas.addEventListener('mouseup', () => this.handleMouseUp());
+        canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
+
+        this.draw();
+      }
+
+      addSessionRange(start, end) {
+        this.sessionRanges.push([start, end, this.randomColor()]);
+        this.draw();
+      }
+
+      addSignal(index, type) {
+        this.signals.push({ index, type });
+        this.draw();
+      }
+
+      addSupportResistance(level, type) {
+        this.supportResistance.push([level, type]);
+        this.draw();
+      }
+
+      handlePrevious() {
+        if (this.currentIndex > 0) {
+          this.currentIndex -= 1;
+          this.draw();
+        }
+      }
+
+      handleNext() {
+        if (this.currentIndex + 30 < this.data.length) {
+          this.currentIndex += 1;
+          this.draw();
+        }
+      }
+
+      handleUpdate(open) {
+        const high = open + Math.random() * 10;
+        const low = open - Math.random() * 10;
+        const close = Math.random() * (high - low) + low;
+        this.data.push({
+          open: open,
+          high: high,
+          low: low,
+          close: close,
+          timestamp: Math.floor(Date.now() / 1000)
+        });
+        this.draw();
+        this.handleNext();
+      }
+
+      randomColor() {
+        const r = Math.floor(Math.random() * 256);
+        const g = Math.floor(Math.random() * 256);
+        const b = Math.floor(Math.random() * 256);
+        const a = Math.random() * 0.5 + 0.3;  // Alpha range between 0.3 and 0.8
+        return `rgba(${r}, ${g}, ${b}, ${a})`;
+      }
+
+      handleMouseDown(e) {
+        this.dragging = true;
+        this.dragStartX = e.clientX;
+        this.startIndex = this.currentIndex;
+        this.canvas.style.cursor = 'grabbing';
+      }
+
+      handleMouseMove(e) {
+        if (this.dragging) {
+          const diff = Math.floor((e.clientX - this.dragStartX) / (this.candleWidth + this.candlePadding));
+          this.currentIndex = Math.max(0, Math.min(this.data.length - 30, this.startIndex - diff));
+          this.draw();
+        }
+      }
+
+      handleMouseUp() {
+        this.dragging = false;
+        this.canvas.style.cursor = 'grab';
+      }
+
+
+      handleCanvasMouseMove(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // Clear the previous crosshair
+        this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw the chart elements
+        this.draw();
+
+        // Draw the crosshair
+        this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, 0);
+        this.ctx.lineTo(x, this.chartHeight + this.chartOffsetY);
+        this.ctx.stroke();
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, y);
+        this.ctx.lineTo(this.chartWidth + this.chartOffsetX, y);
+        this.ctx.stroke();
+
+        // Check if the mouse is within the chart area
+        if (x >= this.chartOffsetX && x <= this.chartOffsetX + this.chartWidth && y >= this.chartOffsetY && y <= this.chartOffsetY + this.chartHeight) {
+          const index = Math.floor((x - this.chartOffsetX) / (this.candleWidth + this.candlePadding)) + this.currentIndex;
+          if (index >= this.currentIndex && index < this.currentIndex + 30 && index < this.data.length) {
+            const { open, high, low, close, timestamp } = this.data[index];
+            const date = new Date(timestamp * 1000);
+            this.tooltipOpen.textContent = open.toFixed(2);
+            this.tooltipHigh.textContent = high.toFixed(2);
+            this.tooltipLow.textContent = low.toFixed(2);
+            this.tooltipClose.textContent = close.toFixed(2);
+            this.tooltipTime.textContent = date.toLocaleString();
+            this.tooltip.style.display = 'block';
+            this.tooltip.style.left = `${e.clientX + 10}px`;
+            this.tooltip.style.top = `${e.clientY + 10}px`;
+          } else {
+            this.tooltip.style.display = 'none';
+          }
+        } else {
+          this.tooltip.style.display = 'none';
+        }
+
+
+   
+}
+      
+
+
+
+      draw() {
+        this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+        this.candleWidth = (this.chartWidth - (45 * this.candlePadding)) / 30;
+        this.candleHeight = this.chartHeight * 0.9;
+
+        const prices = this.data.slice(this.currentIndex, this.currentIndex + 30).map(({ open, high, low, close }) => [open, high, low, close]);
+        const flatPrices = prices.flat();
+        const minPrice = Math.min(...flatPrices);
+        const maxPrice = Math.max(...flatPrices);
+
+
+        // Clear previous y-axis labels
+        this.ctx.clearRect(this.chartWidth, this.chartHeight * 0.05, canvas.width, this.chartHeight * 0.9);
+        // Draw y-axis labels with proper spacing
+        const step = (maxPrice - minPrice) / 5;
+        const yAxisLabelCount = 6;
+        this.ctx.font = '12px Segoe UI';
+        this.ctx.textAlign = 'right';
+        this.ctx.fillStyle = 'black';
+        for (let i = 0; i <= yAxisLabelCount; i++) {
+          const y = this.chartOffsetY + (this.chartHeight * 0.9) * (1 - i / yAxisLabelCount);
+          this.ctx.fillText(`$${(minPrice + i * step).toFixed(2)}`, canvas.width - 10, y);
+        }
+        
+
+        // Draw candles
+        for (let i = this.currentIndex; i < this.currentIndex + 30 && i < this.data.length; i++) {
+          const { open, high, low, close, timestamp } = this.data[i];
+          this.prevClose= close;
+          const x = (i - this.currentIndex) * (this.candleWidth + this.candlePadding);
+          const y = this.chartHeight * 0.1 + (maxPrice - close) / (maxPrice - minPrice) * this.candleHeight;
+
+          // Candle wick
+          this.ctx.strokeStyle = '#000000';
+          this.ctx.beginPath();
+          this.ctx.moveTo(x + this.candleWidth / 2, this.chartHeight * 0.1 + (maxPrice - high) / (maxPrice - minPrice) * this.candleHeight);
+          this.ctx.lineTo(x + this.candleWidth / 2, this.chartHeight * 0.1 + (maxPrice - low) / (maxPrice - minPrice) * this.candleHeight);
+          this.ctx.stroke();
+
+          // Candle body
+          this.ctx.fillStyle = close >= open ? '#4682B4' : '#708090';
+          this.ctx.fillRect(x, y, this.candleWidth, (open - close) / (maxPrice - minPrice) * this.candleHeight);
+        }
+
+        // Draw x-axis labels with formatted dates
+        this.ctx.textAlign = 'right';
+        this.ctx.font = '12px Segoe UI';
+        this.ctx.fillStyle = 'black';
+        for (let i = this.currentIndex; i < this.currentIndex + 30 && i < this.data.length; i= i+3) {
+          const x = (i - this.currentIndex) * (this.candleWidth + this.candlePadding) + this.candleWidth / 2;
+          const date = new Date(this.data[i].timestamp * 1000);
+          this.ctx.fillText(date.toLocaleDateString(), x, this.chartOffsetY + this.chartHeight - 5);
+        }
+
+        // Draw session ranges with random colors
+        this.sessionRanges.forEach(([start, end, color]) => {
+          const startX = (start - this.currentIndex) * (this.candleWidth + this.candlePadding);
+          const endX = (end - this.currentIndex) * (this.candleWidth + this.candlePadding);
+          this.ctx.fillStyle = color;
+          this.ctx.fillRect(startX, this.chartHeight * 0.1, endX - startX, this.candleHeight);
+        });
+
+        // Draw signals
+        this.signals.forEach(({ index, type }) => {
+          const x = (index - this.currentIndex) * (this.candleWidth + this.candlePadding) + this.candleWidth / 2;
+          const y = this.chartHeight * 0.1 + (maxPrice - this.data[index].close) / (maxPrice - minPrice) * this.candleHeight;
+          this.ctx.fillStyle = type === 'buy' ? 'green' : 'red';
+          this.ctx.beginPath();
+          this.ctx.arc(x, y, 10, 0, 2 * Math.PI);
+          this.ctx.fill();
+        });
+
+        // Draw support/resistance levels
+        this.supportResistance.forEach(([level, type]) => {
+          const y = this.chartHeight * 0.1 + (maxPrice - level) / (maxPrice - minPrice) * this.candleHeight;
+          this.ctx.strokeStyle = type === 'support' ? 'green' : 'red';
+          this.ctx.beginPath();
+          this.ctx.moveTo(0, y);
+          this.ctx.lineTo(this.chartWidth, y);
+          this.ctx.stroke();
+        });
+        // Draw signals, support/resistance, and axes as in the original code.
+
+ 
+      }
+
+      
+    }
+
+    const canvas = document.getElementById('candlestick-chart');
+    const data = [
+        { open: 100, high: 105, low: 98, close: 102, timestamp: 1672531200 },
+        { open: 103, high: 107, low: 101, close: 105, timestamp: 1672617600 },
+        { open: 106, high: 110, low: 104, close: 108, timestamp: 1672704000 },
+        { open: 109, high: 113, low: 107, close: 111, timestamp: 1672790400 },
+        { open: 112, high: 116, low: 110, close: 115, timestamp: 1672876800 },
+        { open: 115, high: 118, low: 112, close: 117, timestamp: 1672963200 },
+        { open: 116, high: 119, low: 114, close: 118, timestamp: 1673049600 },
+        { open: 117, high: 120, low: 115, close: 119, timestamp: 1673136000 },
+        { open: 118, high: 121, low: 116, close: 120, timestamp: 1673222400 },
+        { open: 119, high: 123, low: 117, close: 122, timestamp: 1673308800 },
+  
+      // Additional random data points
+    ];
+
+    const chart = new CandlestickChart(canvas, data);
+
+    chart.addSessionRange(4, 5);
+    chart.addSessionRange(8, 10);
+    chart.addSignal(3, 'buy');
+    chart.addSignal(7, 'sell');
+    chart.addSupportResistance(105, 'support');
+    chart.addSupportResistance(115, 'resistance');
+  </script>
+</body>
+</html>
